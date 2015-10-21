@@ -33,6 +33,9 @@ type Scan struct {
 	server       *connection
 	cache        []*ResultRow
 	attrs        map[string][]byte
+	MaxVersions  uint32
+	TsRangeFrom  uint64
+	TsRangeTo    uint64
 }
 
 func NewScan(table []byte, c HBaseClient) *Scan {
@@ -148,6 +151,13 @@ func (s *Scan) getData(nextStart []byte) []*ResultRow {
 	}
 	if s.StopRow != nil {
 		req.Scan.StopRow = s.StopRow
+	}
+	if s.MaxVersions > 0 {
+		req.Scan.MaxVersions = &s.MaxVersions
+	}
+	if s.TsRangeFrom >= 0 && s.TsRangeTo > 0 && s.TsRangeTo > s.TsRangeFrom {
+		req.Scan.TimeRange.From = &s.TsRangeFrom
+		req.Scan.TimeRange.To = &s.TsRangeTo
 	}
 
 	for i, v := range s.families {

@@ -259,3 +259,7 @@ func (c *connection) call(request *call) error {
 	*/
 	return nil
 }
+
+func (c *connection) close() error {
+	return c.conn.Close()
+}

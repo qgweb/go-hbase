@@ -49,15 +49,15 @@ var (
 var retryPauseTime = []int64{1, 2, 3, 5, 10, 20, 40, 100, 100, 100, 100, 200, 200}
 
 type RegionInfo struct {
-	Server string
-	StartKey []byte
-	EndKey []byte
-	Name string
-	Ts string
+	Server         string
+	StartKey       []byte
+	EndKey         []byte
+	Name           string
+	Ts             string
 	TableNamespace string
-	TableName string
-	Offline bool
-	Split bool
+	TableName      string
+	Offline        bool
+	Split          bool
 }
 
 type tableInfo struct {
@@ -76,6 +76,7 @@ type HBaseClient interface {
 	CreateTable(t *TableDescriptor, splits [][]byte) error
 	ServiceCall(table string, call *CoprocessorServiceCall) (*proto.CoprocessorServiceResponse, error)
 	LocateRegion(table, row []byte, useCache bool) *RegionInfo
+	Close() error
 }
 
 // hbase client implemetation
@@ -334,6 +335,25 @@ func (c *client) LocateRegion(table, row []byte, useCache bool) *RegionInfo {
 			c.updateRegionCache(table, region)
 			return region
 		}
+	}
+	return nil
+}
+
+func (c *client) Close() error {
+	if c.zkClient != nil {
+		c.zkClient.Close()
+	}
+	var err error
+	if c.cachedConns != nil && len(c.cachedConns) > 0 {
+		for _, conn := range c.cachedConns {
+			err = conn.close()
+			if err != nil {
+				err = errors.Trace(err)
+			}
+		}
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }
