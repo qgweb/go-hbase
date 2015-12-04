@@ -69,5 +69,19 @@ func main() {
 	}
 	wg.Wait()
 	elapsed := time.Since(ct)
-	log.Errorf("took %s", elapsed)
+	ct = time.Now()
+	log.Infof("took %s", elapsed)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				g := hbase.NewGet([]byte(fmt.Sprintf("row_%d_%d", i, j)))
+				cli.Get(benchTbl, g)
+			}
+		}(i)
+	}
+	wg.Wait()
+	elapsed = time.Since(ct)
+	log.Infof("took %s", elapsed)
 }

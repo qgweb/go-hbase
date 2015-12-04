@@ -98,6 +98,7 @@ type client struct {
 	maxRetries       int
 	rootServerName   *proto.ServerName
 	masterServerName *proto.ServerName
+	getStatusMonitor *GetStatusMonitor
 }
 
 func serverNameToAddr(server *proto.ServerName) string {
@@ -112,6 +113,7 @@ func NewClient(zkHosts []string, zkRoot string) (HBaseClient, error) {
 		cachedRegionInfo: make(map[string]map[string]*RegionInfo),
 		prefetched:       make(map[string]bool),
 		maxRetries:       defaultMaxActionRetries,
+		getStatusMonitor: NewGetStatusMonitor(zkRoot, "test"),
 	}
 	err := cl.init()
 	if err != nil {

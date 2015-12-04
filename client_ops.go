@@ -25,6 +25,7 @@ func (c *client) Get(table string, get *Get) (*ResultRow, error) {
 	response := <-ch
 	switch r := response.(type) {
 	case *proto.GetResponse:
+		c.getStatusMonitor.OnCallSuccess()
 		return NewResultRow(r.GetResult()), nil
 	case *exception:
 		return nil, errors.New(r.msg)
