@@ -36,8 +36,6 @@ func dropTable(tblName string) {
 }
 
 func main() {
-	//ts := time.Now()
-	//prefix := fmt.Sprintf("%ld", ts.UnixNano())
 	var err error
 	cli, err = hbase.NewClient([]string{"localhost"}, "/hbase")
 	if err != nil {
@@ -70,7 +68,7 @@ func main() {
 	wg.Wait()
 	elapsed := time.Since(ct)
 	ct = time.Now()
-	log.Infof("took %s", elapsed)
+	log.Infof("put took %s", elapsed)
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -83,5 +81,5 @@ func main() {
 	}
 	wg.Wait()
 	elapsed = time.Since(ct)
-	log.Infof("took %s", elapsed)
+	log.Infof("get took %s", elapsed)
 }

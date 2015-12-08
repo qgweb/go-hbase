@@ -1,11 +1,10 @@
 package hbase
 
 import (
-	"log"
-	"os"
 	"time"
 
 	"github.com/rcrowley/go-metrics"
+	"github.com/vrischmann/go-metrics-influxdb"
 )
 
 type Context struct {
@@ -24,7 +23,15 @@ func (m *GetStatusMonitor) OnCallSuccess() {
 
 func NewGetStatusMonitor(name, tag string) *GetStatusMonitor {
 	registry := metrics.NewRegistry()
-	go metrics.Log(registry, 1*time.Second, log.New(os.Stderr, "metrcs: ", log.Lmicroseconds))
+	go influxdb.InfluxDB(
+		registry,                // metrics registry
+		time.Second*1,           // interval
+		"http://localhost:8086", // the InfluxDB url
+		"mydb",                  // your InfluxDB database
+		"myuser",                // your InfluxDB user
+		"mypassword",            // your InfluxDB password
+	)
+	//go metrics.Log(registry, 1*time.Second, log.New(os.Stderr, "metrcs: ", log.Lmicroseconds))
 	return &GetStatusMonitor{
 		registry: registry,
 		context: Context{
