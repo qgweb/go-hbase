@@ -9,10 +9,10 @@ import (
 	"net"
 	"sync"
 
-	"github.com/pingcap/go-hbase/iohelper"
-	"github.com/pingcap/go-hbase/proto"
 	pb "github.com/golang/protobuf/proto"
 	"github.com/ngaut/log"
+	"github.com/pingcap/go-hbase/iohelper"
+	"github.com/pingcap/go-hbase/proto"
 )
 
 type idGenerator struct {
@@ -216,6 +216,7 @@ func (c *connection) dispatch() {
 	}
 }
 
+// TODO: split each method
 func (c *connection) call(request *call) error {
 	id := c.idGen.incrAndGet()
 	rh := &proto.RequestHeader{
