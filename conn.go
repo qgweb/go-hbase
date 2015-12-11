@@ -187,7 +187,6 @@ func (c *connection) processMessages() error {
 			call.complete(nil, msgs[1])
 		}
 	}
-	return nil
 }
 
 func (c *connection) writeHead() error {
