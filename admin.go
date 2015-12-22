@@ -11,14 +11,16 @@ import (
 	"github.com/pingcap/go-hbase/proto"
 )
 
+const defaultNS = "default"
+
 type TableName struct {
 	namespace string
 	name      string
 }
 
-func NewTableNameWithDefaultNS(tblName string) TableName {
+func newTableNameWithDefaultNS(tblName string) TableName {
 	return TableName{
-		namespace: "default",
+		namespace: defaultNS,
 		name:      tblName,
 	}
 }
@@ -29,9 +31,9 @@ type TableDescriptor struct {
 	cfs   []*ColumnFamilyDescriptor
 }
 
-func NewTableDesciptor(tblName TableName) *TableDescriptor {
+func NewTableDesciptor(tblName string) *TableDescriptor {
 	ret := &TableDescriptor{
-		name:  tblName,
+		name:  newTableNameWithDefaultNS(tblName),
 		attrs: map[string][]byte{},
 	}
 	ret.AddAddr("IS_META", "false")
@@ -91,6 +93,9 @@ func newColumnFamilyDescriptor(name string, versionsNum int) *ColumnFamilyDescri
 func getPauseTime(retry int) int64 {
 	if retry >= len(retryPauseTime) {
 		retry = len(retryPauseTime) - 1
+	}
+	if retry < 0 {
+		retry = 0
 	}
 	return retryPauseTime[retry] * defaultRetryWaitMs
 }
@@ -163,11 +168,11 @@ func (c *client) CreateTable(t *TableDescriptor, splits [][]byte) error {
 	return errors.New("create table timeout")
 }
 
-func (c *client) DisableTable(tblName TableName) error {
+func (c *client) DisableTable(tblName string) error {
 	req := &proto.DisableTableRequest{
 		TableName: &proto.TableName{
-			Qualifier: []byte(tblName.name),
-			Namespace: []byte(tblName.namespace),
+			Qualifier: []byte(tblName),
+			Namespace: []byte(defaultNS),
 		},
 	}
 
@@ -185,11 +190,11 @@ func (c *client) DisableTable(tblName TableName) error {
 	return nil
 }
 
-func (c *client) EnableTable(tblName TableName) error {
+func (c *client) EnableTable(tblName string) error {
 	req := &proto.EnableTableRequest{
 		TableName: &proto.TableName{
-			Qualifier: []byte(tblName.name),
-			Namespace: []byte(tblName.namespace),
+			Qualifier: []byte(tblName),
+			Namespace: []byte(defaultNS),
 		},
 	}
 
@@ -207,11 +212,11 @@ func (c *client) EnableTable(tblName TableName) error {
 	return nil
 }
 
-func (c *client) DropTable(tblName TableName) error {
+func (c *client) DropTable(tblName string) error {
 	req := &proto.DeleteTableRequest{
 		TableName: &proto.TableName{
-			Qualifier: []byte(tblName.name),
-			Namespace: []byte(tblName.namespace),
+			Qualifier: []byte(tblName),
+			Namespace: []byte(defaultNS),
 		},
 	}
 
@@ -280,7 +285,7 @@ func (c *client) Split(tblOrRegion, splitPoint string) error {
 	tbl := tbls[0]
 	found := false
 	var foundRegion *RegionInfo
-	c.metaScan(tbl, func(region *RegionInfo) (bool, error) {
+	err := c.metaScan(tbl, func(region *RegionInfo) (bool, error) {
 		if region != nil && region.Name == tblOrRegion {
 			found = true
 			foundRegion = region
@@ -288,10 +293,15 @@ func (c *client) Split(tblOrRegion, splitPoint string) error {
 		}
 		return true, nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// This is a region name, split it directly.
 	if found {
 		return c.split(foundRegion, []byte(splitPoint))
 	}
+
 	// This is a table name.
 	tbl = tblOrRegion
 	regions, err := c.GetRegions([]byte(tbl), false)

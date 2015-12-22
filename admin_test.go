@@ -12,8 +12,9 @@ import (
 )
 
 type AdminTestSuit struct {
-	cli       HBaseClient
-	tableName string
+	cli              HBaseClient
+	tableName        string
+	invalidTableName string
 }
 
 var (
@@ -36,43 +37,94 @@ func (s *AdminTestSuit) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.tableName = "test_admin"
-	tblDesc := NewTableDesciptor(NewTableNameWithDefaultNS(s.tableName))
+	s.invalidTableName = "test_admin_xxx"
+	tblDesc := NewTableDesciptor(s.tableName)
 	cf := NewColumnFamilyDescriptor("cf")
 	tblDesc.AddColumnDesc(cf)
-	s.cli.CreateTable(tblDesc, [][]byte{[]byte("f"), []byte("e"), []byte("c")})
+	err = s.cli.CreateTable(tblDesc, [][]byte{[]byte("f"), []byte("e"), []byte("c")})
+	c.Assert(err, IsNil)
 }
 
 func (s *AdminTestSuit) TearDownTest(c *C) {
-	err := s.cli.DisableTable(NewTableNameWithDefaultNS(s.tableName))
+	err := s.cli.DisableTable(s.tableName)
 	c.Assert(err, IsNil)
-	err = s.cli.DropTable(NewTableNameWithDefaultNS(s.tableName))
+	err = s.cli.DropTable(s.tableName)
 	c.Assert(err, IsNil)
 }
 
-func (s *AdminTestSuit) TestTblExists(c *C) {
+func (s *AdminTestSuit) TestTable(c *C) {
 	b, err := s.cli.TableExists(s.tableName)
-	c.Assert(b, IsTrue)
 	c.Assert(err, IsNil)
+	c.Assert(b, IsTrue)
+
+	err = s.cli.DisableTable(s.tableName)
+	c.Assert(err, IsNil)
+
+	// Wait for table disabled.
+	time.Sleep(3 * time.Second)
+
+	p := NewPut([]byte("key"))
+	p.AddValue([]byte("cf"), []byte("f"), []byte("value"))
+	ok, err := s.cli.Put(s.tableName, p)
+	c.Assert(err, NotNil)
+	c.Assert(ok, IsFalse)
+
+	// Wait for table enabled.
+	time.Sleep(3 * time.Second)
+
+	err = s.cli.EnableTable(s.tableName)
+	c.Assert(err, IsNil)
+
+	ok, err = s.cli.Put(s.tableName, p)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+
+	g := NewGet([]byte("key"))
+	g.AddColumn([]byte("cf"), []byte("f"))
+	r, err := s.cli.Get(s.tableName, g)
+	c.Assert(err, IsNil)
+	c.Assert(r.Columns["cf:f"].Values, HasLen, 1)
+	c.Assert(string(r.SortedColumns[0].Value), Equals, "value")
+
+	// Test check unexisted table.
+	b, err = s.cli.TableExists(s.invalidTableName)
+	c.Assert(err, IsNil)
+	c.Assert(b, IsFalse)
+
+	// Test disable unexisted table.
+	err = s.cli.DisableTable(s.invalidTableName)
+	c.Assert(err, NotNil)
+
+	// Test enable unexisted table.
+	err = s.cli.EnableTable(s.invalidTableName)
+	c.Assert(err, NotNil)
+
+	// Test drop unexisted table.
+	err = s.cli.DropTable(s.invalidTableName)
+	c.Assert(err, NotNil)
 }
 
 func (s *AdminTestSuit) TestCreateTableAsync(c *C) {
 	wg := sync.WaitGroup{}
+	wg.Add(10)
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			curTbl := fmt.Sprintf("f_%d", i)
-			curTN := NewTableNameWithDefaultNS(curTbl)
-			b, err := s.cli.TableExists(curTbl)
-			c.Assert(err, IsNil)
-			if b {
-				s.cli.DisableTable(curTN)
-				s.cli.DropTable(curTN)
-			}
-			tblDesc := NewTableDesciptor(curTN)
+			tblName := fmt.Sprintf("f_%d", i)
+			tblDesc := NewTableDesciptor(tblName)
 			cf := NewColumnFamilyDescriptor("cf")
 			tblDesc.AddColumnDesc(cf)
-			s.cli.CreateTable(tblDesc, nil)
+			tblDesc.AddColumnDesc(cf)
+			b, err := s.cli.TableExists(tblName)
+			c.Assert(err, IsNil)
+			if b {
+				// Maybe some table is in disabled state, so we must ignore this error.
+				s.cli.DisableTable(tblName)
+				err = s.cli.DropTable(tblName)
+				c.Assert(err, IsNil)
+			}
+			err = s.cli.CreateTable(tblDesc, nil)
+			c.Assert(err, IsNil)
 		}(i)
 	}
 	wg.Wait()
@@ -80,19 +132,22 @@ func (s *AdminTestSuit) TestCreateTableAsync(c *C) {
 	for i := 0; i < 10; i++ {
 		tblName := fmt.Sprintf("f_%d", i)
 		b, err := s.cli.TableExists(tblName)
+		c.Assert(err, IsNil)
 		c.Assert(b, IsTrue)
+
+		err = s.cli.DisableTable(tblName)
 		c.Assert(err, IsNil)
 
-		tbl := NewTableNameWithDefaultNS(tblName)
-		err = s.cli.DisableTable(tbl)
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = s.cli.DropTable(tbl)
-		if err != nil {
-			log.Fatal(err)
-		}
+		err = s.cli.DropTable(tblName)
+		c.Assert(err, IsNil)
 	}
+}
+
+func (s *AdminTestSuit) TestGetPauseTime(c *C) {
+	invalidRetry := -1
+	c.Assert(getPauseTime(invalidRetry), Equals, retryPauseTime[0]*defaultRetryWaitMs)
+	invalidRetry = len(retryPauseTime)
+	c.Assert(getPauseTime(invalidRetry), Equals, retryPauseTime[len(retryPauseTime)-1]*defaultRetryWaitMs)
 }
 
 func (s *AdminTestSuit) TestGetRegions(c *C) {
@@ -176,7 +231,20 @@ func (s *AdminTestSuit) TestTableSplit(c *C) {
 
 	// Sleep wait Split finish.
 	time.Sleep(500 * time.Millisecond)
+
 	regions, err = s.cli.GetRegions([]byte(s.tableName), false)
 	c.Assert(err, IsNil)
 	c.Assert(regions, HasLen, 5)
+
+	// Test directly split region.
+	err = s.cli.Split(regions[1].Name, "b_50")
+	c.Assert(err, IsNil)
+
+	// Sleep wait Split finish.
+	time.Sleep(500 * time.Millisecond)
+
+	regions, err = s.cli.GetRegions([]byte(s.tableName), false)
+	c.Assert(err, IsNil)
+	c.Assert(regions, HasLen, 6)
+
 }
