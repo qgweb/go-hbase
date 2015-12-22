@@ -395,3 +395,101 @@ func (s *Scan) getServerAndLocation(table, startRow []byte) (*connection, *Regio
 	}
 	return s.server, s.location, nil
 }
+
+// SeekScan provide Seek method to find a row by using current cache.
+type SeekScan struct {
+	*Scan
+	cacheStartRow []byte
+	cacheStopRow  []byte
+	cachePos      int
+}
+
+func NewSeekScan(table []byte, batchSize int, c HBaseClient) *SeekScan {
+	scan := NewScan(table, batchSize, c)
+	return &SeekScan{
+		Scan:          scan,
+		cacheStartRow: nil,
+		cacheStopRow:  nil,
+		cachePos:      0,
+	}
+}
+
+// nextBatch as same as Scan.nextBatch but update info of cache.
+func (ss *SeekScan) nextBatch() int {
+	ret := ss.Scan.nextBatch()
+	if ret > 0 {
+		ss.cacheStartRow = ss.cache[0].Row
+		ss.cacheStopRow = ss.cache[len(ss.cache)-1].Row
+	} else {
+		ss.cacheStartRow = nil
+		ss.cacheStopRow = nil
+	}
+	ss.cachePos = 0
+	return ret
+}
+
+// Seek always find the first row >= rowKey durning current cache,
+// if the rowKey is not in range of current cache, then new scanner will be created.
+func (ss *SeekScan) Seek(rowKey []byte) (*ResultRow, error) {
+	if ss.Closed() {
+		return nil, errors.Trace(errors.Errorf("seek scan has been closed [rowKey=%s]", string(rowKey)))
+	}
+	if len(ss.cache) == 0 ||
+		!inRange(rowKey, ss.cacheStartRow, ss.cacheStopRow) {
+		err := ss.Scan.Close()
+		if err != nil {
+			log.Warnf("Close scan failed, but doesn't matter [rowKey=%s]", string(rowKey))
+		}
+		// Re-create new scan
+		ss.Scan = NewScan(ss.table, ss.numCached, ss.client)
+		ss.nextStartKey = rowKey
+		n := ss.nextBatch()
+		// No data returned.
+		if n == 0 {
+			return nil, errors.Trace(errors.Errorf("seek not found, [row=%s]", string(rowKey)))
+		}
+	}
+	// We assume data is sorted by ascending after fetch.
+	lowIdx := 0
+	uppIdx := len(ss.cache) - 1
+	for lowIdx < uppIdx {
+		midIdx := (lowIdx + uppIdx) / 2
+		cmpRes := bytes.Compare(ss.cache[midIdx].Row, rowKey)
+		switch {
+		case cmpRes == 0:
+			return ss.cache[midIdx], nil
+		case cmpRes < 0:
+			lowIdx = midIdx + 1
+		case cmpRes > 0:
+			uppIdx = midIdx - 1
+		}
+	}
+	midIdx := (lowIdx + uppIdx) / 2
+	return ss.cache[midIdx], nil
+}
+
+// Next iterator with cachePos instead of pop first element of cache.
+func (ss *SeekScan) Next() *ResultRow {
+	if ss.closed {
+		return nil
+	}
+	var ret *ResultRow
+	if len(ss.cache) == 0 || ss.cachePos >= len(ss.cache) {
+		n := ss.nextBatch()
+		// no data returned
+		if n == 0 {
+			return nil
+		}
+	}
+
+	ret = ss.cache[ss.cachePos]
+	ss.cachePos++
+	ss.lastResult = ret
+	return ret
+}
+
+// inRange check key is in the range of [low, upp] or not.
+func inRange(key, low, upp []byte) bool {
+	return bytes.Compare(low, upp) <= 0 &&
+		bytes.Compare(key, low) >= 0 && bytes.Compare(key, upp) <= 0
+}

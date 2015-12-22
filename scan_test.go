@@ -1,6 +1,8 @@
 package hbase
 
 import (
+	"bytes"
+	"fmt"
 	"runtime"
 	"strconv"
 	"sync"
@@ -387,6 +389,204 @@ func (s *ScanTestSuit) TestScanClose(c *C) {
 
 	for i := 1; i <= 100; i++ {
 		d := NewDelete([]byte(strconv.Itoa(i)))
+		b, err := s.cli.Delete(s.tableName, d)
+		c.Assert(err, IsNil)
+		c.Assert(b, IsTrue)
+	}
+}
+
+func (s *ScanTestSuit) TestInRange(c *C) {
+	// nil < x < y < z
+	x := []byte("1")
+	y := []byte("13")
+	z := []byte("42")
+	c.Assert(inRange(x, y, z), IsFalse)
+	c.Assert(inRange(x, z, y), IsFalse)
+	c.Assert(inRange(y, x, z), IsTrue)
+	c.Assert(inRange(y, z, x), IsFalse)
+	c.Assert(inRange(z, x, y), IsFalse)
+	c.Assert(inRange(z, y, x), IsFalse)
+
+	c.Assert(inRange(y, nil, z), IsTrue)
+	c.Assert(inRange(y, x, nil), IsFalse)
+	c.Assert(inRange(nil, x, z), IsFalse)
+}
+
+func (s *ScanTestSuit) TestScanDataSorted(c *C) {
+	for i := 1; i <= 10000; i++ {
+		p := NewPut([]byte(strconv.Itoa(i)))
+		p.AddValue([]byte("cf"), []byte("qsorted"), []byte(strconv.Itoa(i)))
+		ok, err := s.cli.Put(s.tableName, p)
+		c.Assert(ok, IsTrue)
+		c.Assert(err, IsNil)
+	}
+	// batchSize is not a divisor of 10000 for corner case
+	scan := NewScan([]byte(s.tableName), 101, s.cli)
+	last := scan.Next()
+	for i := 2; i <= 10000; i++ {
+		cur := scan.Next()
+		c.Assert(last.Row, Less, cur.Row)
+	}
+
+	for i := 1; i <= 10000; i++ {
+		d := NewDelete([]byte(strconv.Itoa(i)))
+		b, err := s.cli.Delete(s.tableName, d)
+		c.Assert(err, IsNil)
+		c.Assert(b, IsTrue)
+	}
+}
+
+func (s *ScanTestSuit) TestSeekNext(c *C) {
+	// Insert data "001" to "300".
+	for i := 1; i <= 300; i++ {
+		p := NewPut([]byte(fmt.Sprintf("%03d", i)))
+		p.AddValue([]byte("cf"), []byte("qseekgot"), []byte(strconv.Itoa(i)))
+		ok, err := s.cli.Put(s.tableName, p)
+		c.Assert(ok, IsTrue)
+		c.Assert(err, IsNil)
+	}
+	sscan := NewSeekScan([]byte(s.tableName), 101, s.cli)
+
+	// First nextBatch().
+	for i := 1; i <= 101; i++ {
+		resRow := sscan.Next()
+		c.Assert(sscan.cacheStartRow, BytesEquals, []byte("001"))
+		c.Assert(sscan.cacheStopRow, BytesEquals, []byte("101"))
+		c.Assert(sscan.cachePos, Equals, i)
+		c.Assert(resRow.Row, BytesEquals, []byte(fmt.Sprintf("%03d", i)))
+	}
+	// Second nextBatch().
+	for i := 102; i <= 202; i++ {
+		resRow := sscan.Next()
+		c.Assert(sscan.cacheStartRow, BytesEquals, []byte("102"))
+		c.Assert(sscan.cacheStopRow, BytesEquals, []byte("202"))
+		c.Assert(sscan.cachePos, Equals, i-101)
+		c.Assert(resRow.Row, BytesEquals, []byte(fmt.Sprintf("%03d", i)))
+	}
+	// Third nextBatch().
+	for i := 203; i <= 300; i++ {
+		resRow := sscan.Next()
+		c.Assert(sscan.cachePos, Equals, i-202)
+		c.Assert(resRow.Row, BytesEquals, []byte(fmt.Sprintf("%03d", i)))
+	}
+	// No more.
+	resRow := sscan.Next()
+	c.Assert(resRow, IsNil)
+
+	// Next() after Close().
+	sscan = NewSeekScan([]byte(s.tableName), 101, s.cli)
+	err := sscan.Close()
+	c.Assert(err, IsNil)
+	resRow = sscan.Next()
+	c.Assert(resRow, IsNil)
+
+	for i := 1; i <= 300; i++ {
+		d := NewDelete([]byte(fmt.Sprintf("%03d", i)))
+		b, err := s.cli.Delete(s.tableName, d)
+		c.Assert(err, IsNil)
+		c.Assert(b, IsTrue)
+	}
+}
+
+func (s *ScanTestSuit) TestSeekGot(c *C) {
+	// Insert data "1" to "1000".
+	for i := 1; i <= 1000; i++ {
+		p := NewPut([]byte(strconv.Itoa(i)))
+		p.AddValue([]byte("cf"), []byte("qseekgot"), []byte(strconv.Itoa(i)))
+		ok, err := s.cli.Put(s.tableName, p)
+		c.Assert(ok, IsTrue)
+		c.Assert(err, IsNil)
+	}
+	sscan := NewSeekScan([]byte(s.tableName), 101, s.cli)
+
+	// Be found easily.
+	resRow, err := sscan.Seek([]byte("2"))
+	c.Assert(err, IsNil)
+	c.Assert(resRow, NotNil)
+	c.Assert(resRow.Row, BytesEquals, []byte("2"))
+	scanId := sscan.id
+	lastStartRow := sscan.cacheStartRow
+	lastStopRow := sscan.cacheStopRow
+	c.Assert(
+		inRange([]byte("201"), sscan.cacheStartRow, sscan.cacheStopRow),
+		IsTrue)
+
+	// Row == "2" or "201" are both in same cache.
+	resRow, err = sscan.Seek([]byte("201"))
+	c.Assert(err, IsNil)
+	c.Assert(resRow, NotNil)
+	c.Assert(resRow.Row, BytesEquals, []byte("201"))
+	// scanId, cacheStartRow, cacheStopRow are all equal means don't trigger nextBatch().
+	c.Assert(scanId, Equals, sscan.id)
+	c.Assert(lastStartRow, BytesEquals, sscan.cacheStartRow)
+	c.Assert(lastStopRow, BytesEquals, sscan.cacheStopRow)
+
+	// Use Next() iterator to row == "201", and try Seek() again.
+	nextRow := sscan.Next()
+	for bytes.Compare(nextRow.Row, []byte("201")) < 0 {
+		nextRow = sscan.Next()
+	}
+	c.Assert(nextRow.Row, BytesEquals, []byte("201"))
+	resRow, err = sscan.Seek([]byte("2"))
+	c.Assert(err, IsNil)
+	c.Assert(resRow, NotNil)
+	c.Assert(resRow.Row, BytesEquals, []byte("2"))
+	c.Assert(scanId, Equals, sscan.id)
+	c.Assert(lastStartRow, BytesEquals, sscan.cacheStartRow)
+	c.Assert(lastStopRow, BytesEquals, sscan.cacheStopRow)
+
+	// Seek forward, need invoke nextbatch().
+	resRow, err = sscan.Seek([]byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(resRow, NotNil)
+	c.Assert(resRow.Row, BytesEquals, []byte("1"))
+	// Scan must be a new scan.
+	c.Assert(scanId, Not(Equals), sscan.id)
+	c.Assert(lastStartRow, Not(BytesEquals), sscan.cacheStartRow)
+	c.Assert(lastStopRow, Not(BytesEquals), sscan.cacheStopRow)
+
+	// Seek forward, need invoke nextbatch() and return first >= "0" which is "1".
+	resRow, err = sscan.Seek([]byte("0"))
+	c.Assert(err, IsNil)
+	c.Assert(resRow, NotNil)
+	c.Assert(resRow.Row, BytesEquals, []byte("1"))
+	// Scan must be a new scan.
+	c.Assert(scanId, Not(Equals), sscan.id)
+	c.Assert(lastStartRow, Not(BytesEquals), sscan.cacheStartRow)
+	c.Assert(lastStopRow, Not(BytesEquals), sscan.cacheStopRow)
+
+	for i := 1; i <= 1000; i++ {
+		d := NewDelete([]byte(strconv.Itoa(i)))
+		b, err := s.cli.Delete(s.tableName, d)
+		c.Assert(err, IsNil)
+		c.Assert(b, IsTrue)
+	}
+}
+
+func (s *ScanTestSuit) TestSeekFailed(c *C) {
+	// Insert data "001" to "300".
+	for i := 1; i <= 300; i++ {
+		p := NewPut([]byte(fmt.Sprintf("%03d", i)))
+		p.AddValue([]byte("cf"), []byte("qseekfailed"), []byte(strconv.Itoa(i)))
+		ok, err := s.cli.Put(s.tableName, p)
+		c.Assert(ok, IsTrue)
+		c.Assert(err, IsNil)
+	}
+	sscan := NewSeekScan([]byte(s.tableName), 101, s.cli)
+
+	// Not found.
+	resRow, err := sscan.Seek([]byte("4"))
+	c.Assert(err, NotNil)
+	c.Assert(resRow, IsNil)
+
+	err = sscan.Close()
+	c.Assert(err, IsNil)
+	resRow, err = sscan.Seek([]byte("001"))
+	c.Assert(err, NotNil)
+	c.Assert(resRow, IsNil)
+
+	for i := 1; i <= 300; i++ {
+		d := NewDelete([]byte(fmt.Sprintf("%03d", i)))
 		b, err := s.cli.Delete(s.tableName, d)
 		c.Assert(err, IsNil)
 		c.Assert(b, IsTrue)
