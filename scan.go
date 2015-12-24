@@ -194,7 +194,9 @@ func (s *Scan) getData(startKey []byte, retries int) ([]*ResultRow, error) {
 	if s.id > 0 {
 		req.ScannerId = pb.Uint64(s.id)
 	}
-	req.Scan.StartRow = startKey
+	if s.StartRow != nil {
+		req.Scan.StartRow = startKey
+	}
 	if s.StopRow != nil {
 		req.Scan.StopRow = s.StopRow
 	}
@@ -298,14 +300,14 @@ func (s *Scan) processResponse(response pb.Message) ([]*ResultRow, error) {
 		n = len(results)
 	}
 
-	tbr := make([]*ResultRow, n)
+	rs := make([]*ResultRow, 0, n)
 	for i, v := range results {
 		if v != nil {
-			tbr[i] = NewResultRow(v)
+			rs = append(rs, NewResultRow(v))
 		}
 	}
 
-	return tbr, nil
+	return rs, nil
 }
 
 func (s *Scan) nextBatch() int {
