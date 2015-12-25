@@ -301,7 +301,7 @@ func (s *Scan) processResponse(response pb.Message) ([]*ResultRow, error) {
 	}
 
 	rs := make([]*ResultRow, 0, n)
-	for i, v := range results {
+	for _, v := range results {
 		if v != nil {
 			rs = append(rs, NewResultRow(v))
 		}
