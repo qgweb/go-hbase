@@ -290,5 +290,28 @@ func (s *BenchTestSuit) TestFilterScanBenchmark(c *C) {
 			tps := int64(totalCount) * 1e3 / cost
 			fmt.Printf("TestFilterScanBenchmark --> %d kvs %d cache prefix filter cost %d ms, tps %d\n", totalCount, cache, cost, tps)
 		}
+		{
+			now := time.Now()
+			idx = int64(0)
+			scan := NewScan([]byte(s.tableName), cache, s.cli)
+			filter := NewFirstKeyOnlyFilter()
+			scan.AddFilter(filter)
+			defer scan.Close()
+
+			for {
+				r := scan.Next()
+				if r == nil || scan.Closed() {
+					break
+				}
+
+				c.Assert(r.SortedColumns[0].Value, BytesEquals, r.Row)
+				idx++
+			}
+			c.Assert(idx, Equals, int64(totalCount))
+
+			cost := time.Since(now).Nanoseconds() / 1e6
+			tps := int64(totalCount) * 1e3 / cost
+			fmt.Printf("TestFilterScanBenchmark --> %d kvs %d cache first key only filter cost %d ms, tps %d\n", totalCount, cache, cost, tps)
+		}
 	}
 }

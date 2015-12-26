@@ -31,3 +31,20 @@ func (f *PrefixFilter) ToPBFilter() (*proto.Filter, error) {
 	}
 	return filter, nil
 }
+
+type FirstKeyOnlyFilter struct{}
+
+func NewFirstKeyOnlyFilter() FirstKeyOnlyFilter {
+	return FirstKeyOnlyFilter{}
+}
+
+func (f FirstKeyOnlyFilter) ToPBFilter() (*proto.Filter, error) {
+	serializedFilter, err := pb.Marshal(&proto.FirstKeyOnlyFilter{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &proto.Filter{
+		Name:             pb.String(filterPath + "FirstKeyOnlyFilter"),
+		SerializedFilter: serializedFilter,
+	}, nil
+}
