@@ -72,6 +72,9 @@ type Scan struct {
 	// if region split, set startKey = lastResult.Row, but must skip the first
 	skipFirst  bool
 	maxRetries int
+
+	// filter supports customized scan.
+	filter Filter
 }
 
 func NewScan(table []byte, batchSize int, c HBaseClient) *Scan {
@@ -125,6 +128,10 @@ func (s *Scan) AddFamily(family []byte) {
 
 func (s *Scan) AddStringFamily(family string) {
 	s.AddFamily([]byte(family))
+}
+
+func (s *Scan) AddFilter(filter Filter) {
+	s.filter = filter
 }
 
 func (s *Scan) posOfFamily(family []byte) int {
@@ -208,6 +215,13 @@ func (s *Scan) getData(startKey []byte, retries int) ([]*ResultRow, error) {
 			From: pb.Uint64(s.TsRangeFrom),
 			To:   pb.Uint64(s.TsRangeTo),
 		}
+	}
+	if s.filter != nil {
+		pbFilter, err := s.filter.ToPBFilter()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Scan.Filter = pbFilter
 	}
 
 	for i, v := range s.families {
