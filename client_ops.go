@@ -51,6 +51,19 @@ func (c *client) Put(table string, put *Put) (bool, error) {
 	return false, errors.Errorf("Invalid response seen [response: %#v]", response)
 }
 
+func (c *client) Incr(table string, incr *Incr) (bool, error) {
+	response, err := c.do([]byte(table), incr.GetRow(), incr, true)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	switch r := response.(type) {
+	case *proto.MutateResponse:
+		return r.GetProcessed(), nil
+	}
+	return false, errors.Errorf("Invalid response seen [response: %#v]", response)
+}
+
 func (c *client) ServiceCall(table string, call *CoprocessorServiceCall) (*proto.CoprocessorServiceResponse, error) {
 	response, err := c.do([]byte(table), call.Row, call, true)
 	if err != nil {

@@ -34,7 +34,7 @@ func (c *client) innerCall(table, row []byte, action action, useCache bool) (*ca
 			Region: regionSpecifier,
 			Get:    a.ToProto().(*proto.Get),
 		})
-	case *Put, *Delete:
+	case *Put, *Delete,*Incr:
 		cl = newCall(&proto.MutateRequest{
 			Region:   regionSpecifier,
 			Mutation: a.ToProto().(*proto.MutationProto),

@@ -68,6 +68,7 @@ type tableInfo struct {
 type HBaseClient interface {
 	Get(tbl string, g *Get) (*ResultRow, error)
 	Put(tbl string, p *Put) (bool, error)
+	Incr(tbl string, p *Incr) (bool, error)
 	Delete(tbl string, d *Delete) (bool, error)
 	TableExists(tbl string) (bool, error)
 	DropTable(t string) error
